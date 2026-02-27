@@ -1,0 +1,226 @@
+public function up()
+{
+    Schema::create('bookings', function (Blueprint $table) {
+        $table->id();
+        $table->string('name');
+        $table->string('email');
+        $table->enum('booking_type', ['full_day', 'half_day']);
+        $table->date('booking_date');
+        $table->enum('booking_slot', ['morning', 'evening'])->nullable();
+        $table->time('booking_time');
+        $table->timestamps();
+    });
+}
+
+protected $fillable = [
+    'name',
+    'email',
+    'booking_type',
+    'booking_date',
+    'booking_slot',
+    'booking_time',
+];
+
+php artisan make:controller BookingController --resource
+
+
+use App\Models\Booking;
+use Illuminate\Http\Request;
+
+class BookingController extends Controller
+{
+    public function index()
+    {
+        return Booking::orderBy('booking_date')->get();
+    }
+
+    public function store(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string',
+            'email' => 'required|email',
+            'booking_type' => 'required|in:full_day,half_day',
+            'booking_date' => 'required|date',
+            'booking_slot' => 'nullable|in:morning,evening',
+            'booking_time' => 'required'
+        ]);
+
+        $date = $request->booking_date;
+
+        // Rule 1: If Full Day already exists
+        $fullDayExists = Booking::where('booking_date', $date)
+            ->where('booking_type', 'full_day')
+            ->exists();
+
+        if ($fullDayExists) {
+            return response()->json([
+                'message' => 'Full day already booked for this date.'
+            ], 422);
+        }
+
+        // Rule 2: If trying to book Full Day but Half Day exists
+        if ($request->booking_type == 'full_day') {
+            $halfDayExists = Booking::where('booking_date', $date)
+                ->where('booking_type', 'half_day')
+                ->exists();
+
+            if ($halfDayExists) {
+                return response()->json([
+                    'message' => 'Half day already booked. Full day not allowed.'
+                ], 422);
+            }
+        }
+
+        // Rule 3: Prevent same half-day slot booking
+        if ($request->booking_type == 'half_day') {
+            $slotExists = Booking::where('booking_date', $date)
+                ->where('booking_type', 'half_day')
+                ->where('booking_slot', $request->booking_slot)
+                ->exists();
+
+            if ($slotExists) {
+                return response()->json([
+                    'message' => 'This slot already booked.'
+                ], 422);
+            }
+        }
+
+        // Rule 4: No exact duplicate
+        $duplicate = Booking::where([
+            'booking_date' => $date,
+            'booking_time' => $request->booking_time,
+            'booking_slot' => $request->booking_slot,
+        ])->exists();
+
+        if ($duplicate) {
+            return response()->json([
+                'message' => 'Duplicate booking not allowed.'
+            ], 422);
+        }
+
+        $booking = Booking::create($request->all());
+
+        return response()->json($booking);
+    }
+
+    public function destroy($id)
+    {
+        Booking::findOrFail($id)->delete();
+
+        return response()->json(['message' => 'Deleted']);
+    }
+}
+
+Route::apiResource('bookings', BookingController::class
+);
+
+<template>
+  <div>
+    <h2>Create Booking</h2>
+
+    <form @submit.prevent="submitForm">
+
+      <input v-model="form.name" placeholder="Name" />
+      <input v-model="form.email" placeholder="Email" type="email" />
+
+      <select v-model="form.booking_type">
+        <option value="">Select Type</option>
+        <option value="full_day">Full Day</option>
+        <option value="half_day">Half Day</option>
+      </select>
+
+      <input type="date" v-model="form.booking_date" />
+
+      <select v-if="form.booking_type === 'half_day'" v-model="form.booking_slot">
+        <option value="morning">Morning</option>
+        <option value="evening">Evening</option>
+      </select>
+
+      <input type="time" v-model="form.booking_time" />
+
+      <button type="submit">Book</button>
+    </form>
+
+    <p v-if="error" style="color:red">{{ error }}</p>
+  </div>
+</template>
+
+<script>
+import axios from 'axios'
+
+export default {
+  data() {
+    return {
+      error: '',
+      form: {
+        name: '',
+        email: '',
+        booking_type: '',
+        booking_date: '',
+        booking_slot: '',
+        booking_time: ''
+      }
+    }
+  },
+  methods: {
+    async submitForm() {
+      try {
+        await axios.post('/api/bookings', this.form)
+        alert('Booking created')
+        this.error = ''
+      } catch (e) {
+        this.error = e.response.data.message
+      }
+    }
+  }
+}
+</script>
+
+<template>
+  <div>
+    <h2>Booking List</h2>
+
+    <table border="1">
+      <tr>
+        <th>Name</th>
+        <th>Date</th>
+        <th>Time</th>
+        <th>Action</th>
+      </tr>
+
+      <tr v-for="booking in bookings" :key="booking.id">
+        <td>{{ booking.name }}</td>
+        <td>{{ booking.booking_date }}</td>
+        <td>{{ booking.booking_time }}</td>
+        <td>
+          <button @click="deleteBooking(booking.id)">Delete</button>
+        </td>
+      </tr>
+    </table>
+  </div>
+</template>
+
+<script>
+import axios from 'axios'
+
+export default {
+  data() {
+    return {
+      bookings: []
+    }
+  },
+  mounted() {
+    this.fetchBookings()
+  },
+  methods: {
+    async fetchBookings() {
+      const res = await axios.get('/api/bookings')
+      this.bookings = res.data
+    },
+    async deleteBooking(id) {
+      await axios.delete(`/api/bookings/${id}`)
+      this.fetchBookings()
+    }
+  }
+}
+</script>
